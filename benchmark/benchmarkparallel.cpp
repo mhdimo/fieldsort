@@ -4,7 +4,7 @@
 #include <random>
 #include <chrono>
 #include <functional>
-#include "../include/field_space_sort.hpp"
+#include "../include/field_space_sort_parallel.hpp"
 #include <numeric>
 
 template<typename Func>
@@ -205,13 +205,28 @@ int main() {
     benchmark_2d(200, 500);  // 100,000 elements
 
     // 3D Tests
-    benchmark_3d(50, 25, 20);  // 8,000 elements
-    benchmark_3d(50, 50, 20);  // 3,000 elements
-
+    benchmark_3d(10, 10, 10);   // 1,000 elements
+    benchmark_3d(10, 10, 20);   // 2,000 elements
+    benchmark_3d(10, 20, 20);   // 4,000 elements
+    benchmark_3d(10, 20, 40);   // 8,000 elements
+    benchmark_3d(20, 20, 20);   // 8,000 elements
+    benchmark_3d(20, 20, 40);   // 16,000 elements
+    benchmark_3d(20, 40, 40);   // 32,000 elements
+    benchmark_3d(20, 40, 80);   // 64,000 elements
+    benchmark_3d(20, 80, 80);   // 128,000 elements
+    benchmark_3d(40, 80, 80);   // 256,000 elements
+    benchmark_3d(40, 80, 160);  // 512,000 elements
+    benchmark_3d(40, 160, 160); // 1,024,000 elements
 
     // 4D Tests
     benchmark_4d(10, 10, 10, 10); // 10,000 elements
+    benchmark_4d(10, 10, 10, 20); // 20,000 elements
+    benchmark_4d(10, 10, 20, 20); // 40,000 elements
+    benchmark_4d(10, 20, 20, 20); // 80,000 elements
     benchmark_4d(20, 20, 20, 20); // 160,000 elements
-    benchmark_4d(50, 50, 50, 50); // 6,250,000 elements
+    benchmark_4d(20, 20, 20, 40); // 320,000 elements
+    benchmark_4d(20, 20, 40, 40); // 640,000 elements
+    benchmark_4d(20, 40, 40, 40); // 1,280,000 elements
+
     return 0;
 }

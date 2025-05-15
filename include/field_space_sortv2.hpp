@@ -8,10 +8,9 @@
 #include <numeric>
 #include <array>
 #include <queue>
-#include <bitset>
-#include <thread>
+#include <random>
 
-// Fast Manhattan distance calculation - removed unnecessary template parameter
+// Fast Manhattan distance calculation
 inline int manhattan_distance(const std::vector<size_t>& a, const std::vector<size_t>& b) {
     int dist = 0;
     const size_t size = a.size();
@@ -21,11 +20,63 @@ inline int manhattan_distance(const std::vector<size_t>& a, const std::vector<si
     return dist;
 }
 
+// Apply initial heuristic pre-ordering to improve starting state
+template<typename T>
+void apply_heuristic_ordering(std::vector<T>& data, const std::vector<size_t>& dims) {
+    const size_t total = data.size();
+    if (total <= 1) return;
+    
+    // Find min/max for normalization
+    auto [min_it, max_it] = std::minmax_element(data.begin(), data.end());
+    T min_val = *min_it;
+    T max_val = *max_it;
+    if (min_val == max_val) return;
+    
+    // Create index vector
+    std::vector<size_t> indices(total);
+    std::iota(indices.begin(), indices.end(), 0);
+    
+    // Bucket sort heuristic - divide into 8 buckets
+    constexpr int NUM_BUCKETS = 8;
+    std::vector<std::vector<size_t>> buckets(NUM_BUCKETS);
+    
+    // Assign indices to buckets based on value
+    double range_inv = 1.0 / (max_val - min_val);
+    for (size_t i = 0; i < total; ++i) {
+        double norm = (data[i] - min_val) * range_inv;
+        int bucket = std::min(NUM_BUCKETS-1, static_cast<int>(norm * NUM_BUCKETS));
+        buckets[bucket].push_back(i);
+    }
+    
+    // Apply partial sorting within each bucket (improves initial state)
+    for (auto& bucket : buckets) {
+        if (bucket.size() > 32) { // Only sort larger buckets
+            std::sort(bucket.begin(), bucket.end(), 
+                [&data](size_t a, size_t b) { return data[a] < data[b]; });
+        }
+    }
+    
+    // Create new data vector with partial ordering
+    std::vector<T> ordered_data(total);
+    size_t idx = 0;
+    for (const auto& bucket : buckets) {
+        for (size_t i : bucket) {
+            ordered_data[idx++] = data[i];
+        }
+    }
+    
+    // Replace original data
+    data = std::move(ordered_data);
+}
+
 template<typename T>
 void field_space_sort_nd(std::vector<T>& data, const std::vector<size_t>& dims, size_t max_iters = 100) {
     const size_t total_elements = data.size();
     if (total_elements <= 1) return;
 
+    // Apply heuristic pre-ordering for better starting state
+    apply_heuristic_ordering(data, dims);
+    
     // Find min and max in one pass
     auto [min_it, max_it] = std::minmax_element(data.begin(), data.end());
     T min_val = *min_it;
@@ -61,14 +112,17 @@ void field_space_sort_nd(std::vector<T>& data, const std::vector<size_t>& dims, 
         strides[i - 1] = strides[i] * dims[i];
     }
     
+    // Reduced iterations needed due to better starting state
+    max_iters = std::max(max_iters / 2, size_t(10)); 
+    
     for (size_t iter = 0; iter < max_iters; ++iter) {
         bool moved = false;
         std::vector<bool> swapped(total_elements, false);
-        
-        // Use a priority queue to automatically prioritize swaps with highest energy reduction
         std::priority_queue<SwapPair> swap_queue;
         
-        for (size_t idx = 0; idx < total_elements; ++idx) {
+        // Skip every other element to reduce computational load
+        // (we'll catch them on the next iteration)
+        for (size_t idx = (iter % 2); idx < total_elements; idx += 2) {
             if (swapped[idx]) continue;
 
             // Calculate coordinates
@@ -79,15 +133,16 @@ void field_space_sort_nd(std::vector<T>& data, const std::vector<size_t>& dims, 
                 temp /= dims[d_idx];
             }
 
-            // Check neighbors in each dimension
+            // Check only immediate neighbors in each dimension
             for (size_t d = 0; d < dims_size; ++d) {
                 for (int delta : {-1, 1}) {
                     int coord_d = static_cast<int>(coord[d]) + delta;
                     
                     if (coord_d >= 0 && coord_d < static_cast<int>(dims[d])) {
-                        // Copy current coordinate to new_coord
-                        std::copy(coord.begin(), coord.end(), new_coord.begin());
+                        // Set new_coord directly without copying the entire array
                         new_coord[d] = coord_d;
+                        if (d > 0) new_coord[d-1] = coord[d-1];
+                        if (d+1 < dims_size) new_coord[d+1] = coord[d+1];
                         
                         // Calculate neighbor index
                         size_t neighbor_idx = 0;
@@ -95,17 +150,17 @@ void field_space_sort_nd(std::vector<T>& data, const std::vector<size_t>& dims, 
                             neighbor_idx += new_coord[i] * strides[i];
                         }
 
-                        if (neighbor_idx >= total_elements) continue;
-                        if (swapped[neighbor_idx]) continue;
+                        if (neighbor_idx >= total_elements || swapped[neighbor_idx]) 
+                            continue;
 
                         int current_energy = manhattan_distance(coord, ideals[idx]) +
-                                           manhattan_distance(new_coord, ideals[neighbor_idx]);
+                                            manhattan_distance(new_coord, ideals[neighbor_idx]);
                         
                         int new_energy = manhattan_distance(new_coord, ideals[idx]) +
-                                      manhattan_distance(coord, ideals[neighbor_idx]);
+                                        manhattan_distance(coord, ideals[neighbor_idx]);
 
                         int energy_reduction = current_energy - new_energy;
-                        if (energy_reduction > 0) {
+                        if (energy_reduction > 1) { // Only consider significant improvements
                             swap_queue.push({energy_reduction, {idx, neighbor_idx}});
                         }
                     }
@@ -113,8 +168,11 @@ void field_space_sort_nd(std::vector<T>& data, const std::vector<size_t>& dims, 
             }
         }
         
-        // Process swaps in order of energy reduction (highest first)
-        while (!swap_queue.empty()) {
+        // Process only top 80% of swaps for speed
+        size_t max_swaps = swap_queue.size() * 0.8;
+        size_t swaps_done = 0;
+        
+        while (!swap_queue.empty() && swaps_done < max_swaps) {
             auto [energy_reduction, swap_pair] = swap_queue.top();
             swap_queue.pop();
             
@@ -125,6 +183,7 @@ void field_space_sort_nd(std::vector<T>& data, const std::vector<size_t>& dims, 
                 swapped[i] = true;
                 swapped[j] = true;
                 moved = true;
+                swaps_done++;
             }
         }
 
@@ -228,6 +287,5 @@ void field_space_sort(std::vector<std::vector<std::vector<std::vector<T>>>>& tes
         }
     }
 }
-
 
 #endif // FIELD_SPACE_SORT_HPP
