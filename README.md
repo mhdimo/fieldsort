@@ -1,5 +1,8 @@
 # FieldSort: A C++ Library for N-Dimensional Data Sorting
 
+> [!WARNING]  
+> This Algorithms is not really optimised, I discourage to use it, and also needs still more development, feel free to pull request
+
 FieldSort is a C++ header-only library that provides a custom sorting algorithm, `field_space_sort`, designed for sorting elements in N-dimensional data structures. The algorithm aims to arrange data based on proximity and a concept of "energy reduction" within the N-dimensional space.
 
 ## Features
